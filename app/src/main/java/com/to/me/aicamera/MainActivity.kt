@@ -66,7 +66,7 @@ import androidx.lifecycle.compose.LocalLifecycleOwner
 import com.google.accompanist.permissions.ExperimentalPermissionsApi
 import com.google.accompanist.permissions.isGranted
 import com.google.accompanist.permissions.rememberPermissionState
-import com.to.me.aicamera.classifiers.YoloObjectDetector
+import com.to.me.aicamera.classifiers.OnnxObjectDetector
 import com.to.me.aicamera.ui.theme.AiCameraTheme
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
@@ -296,7 +296,7 @@ fun CameraPreview(onDetection: (Pair<String, Bitmap>?) -> Unit) {
     val lifecycleOwner = LocalLifecycleOwner.current
     var lensFacing by rememberSaveable { mutableIntStateOf(CameraSelector.LENS_FACING_BACK) }
 
-    val classifier = remember { YoloObjectDetector(context) }
+    val classifier = remember { OnnxObjectDetector(context) }
     val detectionLogs = remember { mutableStateListOf<String>() }
 
     val cameraSelector = remember(lensFacing) {
@@ -329,12 +329,12 @@ fun CameraPreview(onDetection: (Pair<String, Bitmap>?) -> Unit) {
                             val detections = classifier.detect(bitmap)
 
                             if (detections.isNotEmpty()) {
-                                val topDetection = detections.maxByOrNull { it.confidence }
+                                val topDetection = detections.maxByOrNull { top -> top.confidence }
                                 topDetection?.let { res ->
                                     val logText =
-                                        "✅ x:${res.x.format2f()}, y:${res.y.format2f()}, w:${res.w.format2f()}, h:${res.h.format2f()}, conf:${res.confidence.format2f()}"
+                                        "✅ ${res.label ?: "No label"} x:${res.x.format2f()}, y:${res.y.format2f()}, w:${res.w.format2f()}, h:${res.h.format2f()}, conf:${res.confidence.format2f()}"
 
-                                    if (detectionLogs.size >= 10) detectionLogs.removeFirst()
+                                    if (detectionLogs.size >= 10) detectionLogs.removeAt(0)
                                     detectionLogs.add(logText)
 
                                     onDetection(Pair(logText, bitmap))

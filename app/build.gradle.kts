@@ -67,6 +67,10 @@ dependencies {
     implementation(libs.tensorflow.lite.support)
     implementation(libs.tensorflow.lite.gpu)
 
+    // ONNX Runtime for Android
+
+    implementation(libs.onnxruntime.android)
+
     // Extended icons
     implementation(libs.androidx.material.icons.extended)
 

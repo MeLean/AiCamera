@@ -90,7 +90,7 @@ class YoloObjectDetector(context: Context) {
                         w,
                         h,
                         confidence,
-                        label = classId // Assuming classId is the label
+                        classId = classId
                     )
                 ) // Replace label if needed
             }
@@ -99,12 +99,3 @@ class YoloObjectDetector(context: Context) {
         return results
     }
 }
-
-data class DetectionResult(
-    val x: Float,
-    val y: Float,
-    val w: Float,
-    val h: Float,
-    val confidence: Float,
-    val label: Int
-)
