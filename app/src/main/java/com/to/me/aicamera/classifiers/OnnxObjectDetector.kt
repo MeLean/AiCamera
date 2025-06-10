@@ -8,12 +8,13 @@ import android.graphics.Bitmap
 import android.util.Log
 import androidx.core.graphics.scale
 import java.nio.FloatBuffer
+import java.nio.LongBuffer
 
 
 class OnnxObjectDetector(context: Context) {
 
     companion object {
-        private const val MODEL_NAME = "yolov8n.onnx"
+        private const val MODEL_NAME = "last.onnx"
         private const val LABELS_FILE = "yolov8n_labels.txt"
         private const val INPUT_SIZE = 640
         private const val CONFIDENCE_THRESHOLD = 0.7f
@@ -34,8 +35,6 @@ class OnnxObjectDetector(context: Context) {
 
     fun detect(bitmap: Bitmap): List<DetectionResult> {
         val scaledBitmap = bitmap.scale(INPUT_SIZE, INPUT_SIZE)
-        Log.d("TEST_IT", "🔍 Bitmap scaled: ${scaledBitmap.width}×${scaledBitmap.height}")
-
 
         val floatBuffer = preprocess(scaledBitmap)
 
@@ -43,16 +42,60 @@ class OnnxObjectDetector(context: Context) {
             ortEnv, floatBuffer, longArrayOf(1, 3, INPUT_SIZE.toLong(), INPUT_SIZE.toLong())
         )
 
-        val outputs = session.run(mapOf(session.inputNames.first() to inputTensor))
+
+        val targetSizeTensor = OnnxTensor.createTensor(
+            ortEnv, LongBuffer.wrap(longArrayOf(INPUT_SIZE.toLong(), INPUT_SIZE.toLong())),
+            longArrayOf(1, 2)
+        )
+        val outputs = session.run(
+            mapOf(
+                session.inputNames.first() to inputTensor,
+                session.inputNames.last() to targetSizeTensor
+            )
+        )
         inputTensor.close()
+        targetSizeTensor.close()
 
         @Suppress("UNCHECKED_CAST")
-        val raw = (outputs[0].value as Array<Array<FloatArray>>)[0] // shape [300][6]
+        val classId = (outputs.get("labels").get().value as Array<LongArray>)[0]
+
+        @Suppress("UNCHECKED_CAST")
+        val bounds = (outputs.get("boxes").get().value as Array<Array<FloatArray>>)[0]
+
+        @Suppress("UNCHECKED_CAST")
+        val confidences = (outputs.get("scores").get().value as Array<FloatArray>)[0]
+
+        val output = parseResults(classId, bounds, confidences, scaledBitmap)
+
         outputs.close()
 
-        val detections = parseOutput(raw)
+        return output
+    }
 
-        return detections
+    private fun parseResults(
+        classIds: LongArray,
+        boxes: Array<FloatArray>,
+        scores: FloatArray,
+        scaledBitmap: Bitmap,
+    ): List<DetectionResult> {
+
+        Log.d("TEST_IT", "bitmap size: ${scaledBitmap.width}x${scaledBitmap.height}")
+        return classIds.indices
+            .filter { scores[it] >= CONFIDENCE_THRESHOLD }
+            .map { i ->
+                val box = boxes[i]
+                DetectionResult(
+                    x1 = box[0],
+                    y1 = box[1],
+                    x2 = box[2],
+                    y2 = box[3],
+                    confidence = scores[i],
+                    classId = classIds[i].toInt(),
+                    label = "Card",
+                    imageWidth = scaledBitmap.width.toFloat(),
+                    imageHeight = scaledBitmap.height.toFloat()
+                )
+            }
     }
 
     private fun preprocess(bitmap: Bitmap): FloatBuffer {
@@ -82,7 +125,11 @@ class OnnxObjectDetector(context: Context) {
             val classId = row[5].toInt()
             if (conf < CONFIDENCE_THRESHOLD) continue
             val label = if (classId in labels.indices) labels[classId] else "Unknown"
-            results.add(DetectionResult(x1, y1, x2 - x1, y2 - y1, conf, classId, label))
+            results.add(
+                DetectionResult(
+                    x1, y1, x2 - x1, y2 - y1, conf, classId, label
+                )
+            )
         }
         return results
     }
