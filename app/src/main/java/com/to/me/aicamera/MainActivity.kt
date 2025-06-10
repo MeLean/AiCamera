@@ -339,6 +339,15 @@ fun CameraPreview(onDetection: (Pair<String, Bitmap>?) -> Unit) {
                     Log.d("TEST_IT", "Rotated Bitmap: ${bitmap.width}x${bitmap.height}")
 
                     val detections = classifier.detect(bitmap)
+        val imageAnalyzer = ImageAnalysis.Builder()
+            .setBackpressureStrategy(ImageAnalysis.STRATEGY_KEEP_ONLY_LATEST)
+            .build()
+            .also { analysis ->
+                analysis.setAnalyzer(ContextCompat.getMainExecutor(context)) { imageProxy ->
+                    val rotation = imageProxy.imageInfo.rotationDegrees
+                    val bitmap = imageProxy.toBitmap().rotate(rotation)
+
+                    val detections = classifier.detect(bitmap)
 
                     if (detections.isNotEmpty()) {
                         val best = detections.maxByOrNull { it.confidence }
@@ -386,22 +395,22 @@ fun CameraPreview(onDetection: (Pair<String, Bitmap>?) -> Unit) {
                 val canvasWidth = size.width
                 val canvasHeight = size.height
 
-                val modelInputSize = 640f
-                val originalImageWidth = 480f
-                val padding = (modelInputSize - originalImageWidth) / 2f
 
-                val xScale = canvasWidth / originalImageWidth
-                val yScale = canvasHeight / modelInputSize
+                val compressedWidth = 640f
+                val compressedHeight = 640f
 
-                val x1 = (result.x1 - padding) * xScale
-                val x2 = (result.x2 - padding) * xScale
-                val y1 = result.y1 * yScale
-                val y2 = result.y2 * yScale
+                val scaleX = canvasWidth / compressedWidth
+                val scaleY = canvasHeight / compressedHeight
+
+                val x1 = result.x1 * scaleX
+                val y1 = result.y1 * scaleY
+                val x2 = result.x2 * scaleX
+                val y2 = result.y2 * scaleY
 
                 drawRect(
                     color = Color.Green,
                     topLeft = Offset(x1, y1),
-                    size = Size(x2 - x1, y2 - y1),
+                    size = Size(x2, y2 - y1),
                     style = Stroke(width = 4.dp.toPx())
                 )
             }
