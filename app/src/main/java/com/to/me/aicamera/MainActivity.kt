@@ -329,21 +329,6 @@ fun CameraPreview(onDetection: (Pair<String, Bitmap>?) -> Unit) {
             .build()
             .also { analysis ->
                 analysis.setAnalyzer(ContextCompat.getMainExecutor(context)) { imageProxy ->
-                    val raw = imageProxy.toBitmap()
-
-                    Log.d("TEST_IT", "Raw Image received: ${raw.width}x${raw.height}")
-
-                    val rotation = imageProxy.imageInfo.rotationDegrees
-                    val bitmap = raw.rotate(rotation)
-
-                    Log.d("TEST_IT", "Rotated Bitmap: ${bitmap.width}x${bitmap.height}")
-
-                    val detections = classifier.detect(bitmap)
-        val imageAnalyzer = ImageAnalysis.Builder()
-            .setBackpressureStrategy(ImageAnalysis.STRATEGY_KEEP_ONLY_LATEST)
-            .build()
-            .also { analysis ->
-                analysis.setAnalyzer(ContextCompat.getMainExecutor(context)) { imageProxy ->
                     val rotation = imageProxy.imageInfo.rotationDegrees
                     val bitmap = imageProxy.toBitmap().rotate(rotation)
 
@@ -395,22 +380,22 @@ fun CameraPreview(onDetection: (Pair<String, Bitmap>?) -> Unit) {
                 val canvasWidth = size.width
                 val canvasHeight = size.height
 
+                val modelInputSize = 640f
+                val originalImageWidth = 480f
+                val padding = (modelInputSize - originalImageWidth) / 2f // 80px
 
-                val compressedWidth = 640f
-                val compressedHeight = 640f
+                val xScale = canvasWidth / originalImageWidth
+                val yScale = canvasHeight / modelInputSize
 
-                val scaleX = canvasWidth / compressedWidth
-                val scaleY = canvasHeight / compressedHeight
-
-                val x1 = result.x1 * scaleX
-                val y1 = result.y1 * scaleY
-                val x2 = result.x2 * scaleX
-                val y2 = result.y2 * scaleY
+                val x1 = (result.x1 - padding) * xScale
+                val x2 = (result.x2 - padding) * xScale
+                val y1 = result.y1 * yScale
+                val y2 = result.y2 * yScale
 
                 drawRect(
                     color = Color.Green,
                     topLeft = Offset(x1, y1),
-                    size = Size(x2, y2 - y1),
+                    size = Size(x2 - x1, y2 - y1),
                     style = Stroke(width = 4.dp.toPx())
                 )
             }
