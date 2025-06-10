@@ -14,6 +14,7 @@ import androidx.camera.core.ImageAnalysis
 import androidx.camera.core.Preview
 import androidx.camera.lifecycle.ProcessCameraProvider
 import androidx.camera.view.PreviewView
+import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
@@ -54,7 +55,10 @@ import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.geometry.Offset
+import androidx.compose.ui.geometry.Size
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.drawscope.Stroke
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
@@ -66,6 +70,7 @@ import androidx.lifecycle.compose.LocalLifecycleOwner
 import com.google.accompanist.permissions.ExperimentalPermissionsApi
 import com.google.accompanist.permissions.isGranted
 import com.google.accompanist.permissions.rememberPermissionState
+import com.to.me.aicamera.classifiers.DetectionResult
 import com.to.me.aicamera.classifiers.OnnxObjectDetector
 import com.to.me.aicamera.ui.theme.AiCameraTheme
 import kotlinx.coroutines.CoroutineScope
@@ -290,6 +295,11 @@ suspend fun sendToApi(
     }
 }
 
+fun Bitmap.rotate(degrees: Int): Bitmap {
+    val matrix = android.graphics.Matrix().apply { postRotate(degrees.toFloat()) }
+    return Bitmap.createBitmap(this, 0, 0, width, height, matrix, true)
+}
+
 @Composable
 fun CameraPreview(onDetection: (Pair<String, Bitmap>?) -> Unit) {
     val context = LocalContext.current
@@ -298,6 +308,7 @@ fun CameraPreview(onDetection: (Pair<String, Bitmap>?) -> Unit) {
 
     val classifier = remember { OnnxObjectDetector(context) }
     val detectionLogs = remember { mutableStateListOf<String>() }
+    val topDetection = remember { mutableStateOf<DetectionResult?>(null) }
 
     val cameraSelector = remember(lensFacing) {
         CameraSelector.Builder()
@@ -307,56 +318,93 @@ fun CameraPreview(onDetection: (Pair<String, Bitmap>?) -> Unit) {
 
     val previewView = remember { PreviewView(context) }
 
+    LaunchedEffect(cameraSelector) {
+        val cameraProvider = ProcessCameraProvider.getInstance(context).get()
+        val preview = Preview.Builder().build().apply {
+            surfaceProvider = previewView.surfaceProvider
+        }
+
+        val imageAnalyzer = ImageAnalysis.Builder()
+            .setBackpressureStrategy(ImageAnalysis.STRATEGY_KEEP_ONLY_LATEST)
+            .build()
+            .also { analysis ->
+                analysis.setAnalyzer(ContextCompat.getMainExecutor(context)) { imageProxy ->
+                    val raw = imageProxy.toBitmap()
+
+                    Log.d("TEST_IT", "Raw Image received: ${raw.width}x${raw.height}")
+
+                    val rotation = imageProxy.imageInfo.rotationDegrees
+                    val bitmap = raw.rotate(rotation)
+
+                    Log.d("TEST_IT", "Rotated Bitmap: ${bitmap.width}x${bitmap.height}")
+
+                    val detections = classifier.detect(bitmap)
+
+                    if (detections.isNotEmpty()) {
+                        val best = detections.maxByOrNull { it.confidence }
+                        best?.let { res ->
+                            val log = "\u2705 ${res.label ?: "No label"} " +
+                                    "x1:${res.x1.format2f()}, y1:${res.y1.format2f()}, " +
+                                    "x2:${res.x2.format2f()}, y2:${res.y2.format2f()}, " +
+                                    "conf:${res.confidence.format2f()}"
+
+                            if (detectionLogs.size >= 10) detectionLogs.removeAt(0)
+                            detectionLogs.add(log)
+
+                            topDetection.value = res
+                            onDetection(log to bitmap)
+                        }
+                    } else {
+                        topDetection.value = null
+                    }
+
+                    imageProxy.close()
+                }
+            }
+
+        try {
+            cameraProvider.unbindAll()
+            cameraProvider.bindToLifecycle(
+                lifecycleOwner,
+                cameraSelector,
+                preview,
+                imageAnalyzer
+            )
+        } catch (e: Exception) {
+            Log.e("TEST_IT", "Camera binding failed: ${e.message}")
+        }
+    }
+
     Box(modifier = Modifier.fillMaxSize()) {
         AndroidView(
             factory = { previewView },
             modifier = Modifier.fillMaxSize()
-        ) { view ->
-            val cameraProviderFuture = ProcessCameraProvider.getInstance(context)
-            cameraProviderFuture.addListener({
-                val cameraProvider = cameraProviderFuture.get()
+        )
 
-                val preview = Preview.Builder().build().also {
-                    it.surfaceProvider = view.surfaceProvider
-                }
+        topDetection.value?.let { result ->
+            Canvas(modifier = Modifier.fillMaxSize()) {
+                val canvasWidth = size.width
+                val canvasHeight = size.height
 
-                val imageAnalyzer = ImageAnalysis.Builder()
-                    .setBackpressureStrategy(ImageAnalysis.STRATEGY_KEEP_ONLY_LATEST)
-                    .build()
-                    .also {
-                        it.setAnalyzer(ContextCompat.getMainExecutor(context)) { imageProxy ->
-                            val bitmap = imageProxy.toBitmap()
-                            val detections = classifier.detect(bitmap)
+                val modelInputSize = 640f
+                val originalImageWidth = 480f
+                val padding = (modelInputSize - originalImageWidth) / 2f
 
-                            if (detections.isNotEmpty()) {
-                                val topDetection = detections.maxByOrNull { top -> top.confidence }
-                                topDetection?.let { res ->
-                                    val logText =
-                                        "✅ ${res.label ?: "No label"} x:${res.x.format2f()}, y:${res.y.format2f()}, w:${res.w.format2f()}, h:${res.h.format2f()}, conf:${res.confidence.format2f()}"
+                val xScale = canvasWidth / originalImageWidth
+                val yScale = canvasHeight / modelInputSize
 
-                                    if (detectionLogs.size >= 10) detectionLogs.removeAt(0)
-                                    detectionLogs.add(logText)
+                val x1 = (result.x1 - padding) * xScale
+                val x2 = (result.x2 - padding) * xScale
+                val y1 = result.y1 * yScale
+                val y2 = result.y2 * yScale
 
-                                    onDetection(Pair(logText, bitmap))
-                                }
-                            }
-
-                            imageProxy.close()
-                        }
-                    }
-
-                try {
-                    cameraProvider.unbindAll()
-                    cameraProvider.bindToLifecycle(
-                        lifecycleOwner,
-                        cameraSelector,
-                        preview,
-                        imageAnalyzer
-                    )
-                } catch (e: Exception) {
-                    Log.e("TEST_IT", "Camera binding failed: ${e.message}")
-                }
-            }, ContextCompat.getMainExecutor(context))
+                drawRect(
+                    color = Color.Green,
+                    topLeft = Offset(x1, y1),
+                    size = Size(x2 - x1, y2 - y1),
+                    style = Stroke(width = 4.dp.toPx())
+                )
+            }
         }
 
         IconButton(
@@ -374,7 +422,6 @@ fun CameraPreview(onDetection: (Pair<String, Bitmap>?) -> Unit) {
             Icon(Icons.Filled.SwitchCamera, contentDescription = "Switch Camera")
         }
 
-        // Logs viewer (bottom)
         DetectionLogViewer(
             detectionLogs = detectionLogs,
             onClear = {
@@ -387,7 +434,6 @@ fun CameraPreview(onDetection: (Pair<String, Bitmap>?) -> Unit) {
         )
     }
 }
-
 
 @Composable
 fun DetectionLogViewer(
